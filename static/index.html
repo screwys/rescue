@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rescue!</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Rescue!</h1>
+        <p id="server-summary">Starting...</p>
+        <p id="copy-help">Click on the black snippets to automatically copy</p>
+      </div>
+      <div class="status">
+        <span id="save-state">Loading</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="section">
+        <div class="section-heading">
+          <h2>Instructions</h2>
+          <button id="add-instruction" type="button">Add instruction</button>
+        </div>
+        <div id="instructions" class="grid"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <h2>Scripts</h2>
+          <button id="add-script" type="button">Add script</button>
+        </div>
+        <div id="scripts" class="grid scripts"></div>
+      </section>
+    </main>
+
+    <template id="instruction-template">
+      <article class="block">
+        <div class="block-head">
+          <input class="title-input" aria-label="Instruction title" />
+          <button class="remove" type="button" title="Remove">Remove</button>
+        </div>
+        <textarea class="content-input" spellcheck="false"></textarea>
+        <div class="snippet-row">
+          <pre title="Copy" tabindex="0"><code></code></pre>
+          <button class="copy-snippet" type="button">Copy</button>
+        </div>
+      </article>
+    </template>
+
+    <template id="script-template">
+      <article class="block">
+        <div class="block-head">
+          <input class="filename-input" aria-label="Script filename" />
+          <button class="remove" type="button" title="Remove">Remove</button>
+        </div>
+        <textarea class="content-input script-body" spellcheck="false"></textarea>
+        <div class="snippet-row">
+          <div class="run-line" title="Copy" tabindex="0"></div>
+          <button class="copy-snippet" type="button">Copy</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
