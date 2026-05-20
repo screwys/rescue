@@ -4,6 +4,7 @@ const instructionRoot = document.querySelector("#instructions");
 const scriptRoot = document.querySelector("#scripts");
 const instructionTemplate = document.querySelector("#instruction-template");
 const scriptTemplate = document.querySelector("#script-template");
+const instructionAutoRows = 10;
 
 let state = null;
 let saveTimer = null;
@@ -27,6 +28,7 @@ function render() {
   serverSummary.textContent = summaryText();
   instructionRoot.replaceChildren(...state.instructions.map(renderInstruction));
   scriptRoot.replaceChildren(...state.scripts.map(renderScript));
+  resizeInstructionTextareas();
   rendering = false;
 }
 
@@ -53,6 +55,7 @@ function renderInstruction(item) {
   content.addEventListener("input", () => {
     item.content = content.value;
     code.textContent = item.content;
+    resizeInstructionTextarea(content);
     scheduleSave();
   });
   pre.addEventListener("click", () => copyText(item.content, copy));
@@ -186,6 +189,28 @@ function nextNumber(items, prefix) {
   return next;
 }
 
+function resizeInstructionTextareas() {
+  document.querySelectorAll(".instruction-body").forEach(resizeInstructionTextarea);
+}
+
+function resizeInstructionTextarea(textarea) {
+  const style = window.getComputedStyle(textarea);
+  const fontSize = parseFloat(style.fontSize) || 14;
+  const lineHeight = parseFloat(style.lineHeight) || fontSize * 1.45;
+  const padding =
+    (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+  const border =
+    (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+  const minHeight = parseFloat(style.minHeight) || 0;
+  const maxAutoHeight = lineHeight * instructionAutoRows + padding + border;
+
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.max(
+    minHeight,
+    Math.min(textarea.scrollHeight + border, maxAutoHeight),
+  )}px`;
+}
+
 async function copyText(text, button) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
@@ -223,6 +248,8 @@ function connectEvents() {
     setStatus("Live reload disconnected");
   };
 }
+
+window.addEventListener("resize", resizeInstructionTextareas);
 
 loadState()
   .then(connectEvents)

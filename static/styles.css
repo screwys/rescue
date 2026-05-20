@@ -10,6 +10,8 @@
   --danger: #9f2636;
   --code: #101418;
   --code-text: #eef3f0;
+  --copy-preview-max-height: calc(4.35em + 24px);
+  --instruction-min-height: calc(4.35em + 26px);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -169,11 +171,15 @@ label {
 }
 
 textarea {
-  min-height: 160px;
   resize: vertical;
   padding: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   line-height: 1.45;
+}
+
+.instruction-body {
+  min-height: var(--instruction-min-height);
+  overflow-y: auto;
 }
 
 .script-body {
@@ -190,6 +196,7 @@ pre,
   padding: 12px;
   font-size: 13px;
   line-height: 1.45;
+  max-height: var(--copy-preview-max-height);
 }
 
 .snippet-row {
