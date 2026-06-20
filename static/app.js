@@ -16,18 +16,29 @@ const instructionAutoRows = 10;
 let state = null;
 let sharedFiles = [];
 let hiddenFiles = new Set();
+let stateFingerprint = "";
+let filesFingerprint = "";
 let saveTimer = null;
 let rendering = false;
 let dirty = false;
+let saving = false;
+let pendingRemote = false;
+let syncTimer = null;
 
 function setStatus(text) {
   stateLabel.textContent = text;
 }
 
-async function loadState() {
+async function loadState(options = {}) {
   const response = await fetch("/api/state", { cache: "no-store" });
   if (!response.ok) throw new Error(await response.text());
-  state = await response.json();
+  const next = await response.json();
+  const fingerprint = JSON.stringify(next);
+  if (!options.force && fingerprint === stateFingerprint) {
+    return;
+  }
+  state = next;
+  stateFingerprint = fingerprint;
   render();
   setStatus("Saved");
 }
@@ -35,7 +46,13 @@ async function loadState() {
 async function loadFiles() {
   const response = await fetch("/api/files", { cache: "no-store" });
   if (!response.ok) throw new Error(await response.text());
-  sharedFiles = await response.json();
+  const next = await response.json();
+  const fingerprint = JSON.stringify(next);
+  if (fingerprint === filesFingerprint) {
+    return;
+  }
+  sharedFiles = next;
+  filesFingerprint = fingerprint;
   renderFiles();
 }
 
@@ -216,6 +233,8 @@ function scheduleSave() {
 async function saveNow() {
   if (!dirty) return;
   dirty = false;
+  saving = true;
+  let saved = false;
   const payload = {
     version: state.version,
     instructions: state.instructions,
@@ -229,11 +248,19 @@ async function saveNow() {
     });
     if (!response.ok) throw new Error(await response.text());
     state = await response.json();
+    stateFingerprint = JSON.stringify(state);
     render();
     setStatus("Saved");
+    saved = true;
   } catch (error) {
     dirty = true;
     setStatus(`Save failed: ${error.message.trim()}`);
+  } finally {
+    saving = false;
+  }
+  if (saved && pendingRemote) {
+    pendingRemote = false;
+    await syncRemote();
   }
 }
 
@@ -273,7 +300,9 @@ resetAll.addEventListener("click", async () => {
     const response = await fetch("/api/reset", { method: "POST" });
     if (!response.ok) throw new Error(await response.text());
     state = await response.json();
+    stateFingerprint = JSON.stringify(state);
     sharedFiles = [];
+    filesFingerprint = JSON.stringify(sharedFiles);
     hiddenFiles = new Set();
     uploadInput.value = "";
     render();
@@ -453,22 +482,47 @@ function flashCopy(button, text) {
   }, 900);
 }
 
+async function syncRemote() {
+  if (dirty || saving) {
+    pendingRemote = true;
+    return;
+  }
+  await Promise.all([
+    loadState().catch((error) => setStatus(`Reload failed: ${error.message}`)),
+    loadFiles().catch((error) => {
+      uploadStatus.textContent = `Reload failed: ${error.message}`;
+    }),
+  ]);
+}
+
 function connectEvents() {
   const events = new EventSource("/api/events");
   events.addEventListener("update", () => {
-    if (!dirty) loadState().catch((error) => setStatus(`Reload failed: ${error.message}`));
-    loadFiles().catch((error) => {
-      uploadStatus.textContent = `Reload failed: ${error.message}`;
-    });
+    syncRemote();
+  });
+  events.addEventListener("ready", () => {
+    setStatus("Saved");
   });
   events.onerror = () => {
     setStatus("Live reload disconnected");
   };
 }
 
+function startSyncFallback() {
+  clearInterval(syncTimer);
+  syncTimer = setInterval(syncRemote, 2500);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) syncRemote();
+  });
+  window.addEventListener("focus", syncRemote);
+}
+
 window.addEventListener("resize", resizeInstructionTextareas);
 
-loadState()
+loadState({ force: true })
   .then(loadFiles)
-  .then(connectEvents)
+  .then(() => {
+    connectEvents();
+    startSyncFallback();
+  })
   .catch((error) => setStatus(`Load failed: ${error.message}`));

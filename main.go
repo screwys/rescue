@@ -357,12 +357,18 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "event: ready\ndata: {}\n\n")
 	flusher.Flush()
 
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-ch:
 			fmt.Fprint(w, "event: update\ndata: {}\n\n")
+			flusher.Flush()
+		case <-ticker.C:
+			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		}
 	}
