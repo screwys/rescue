@@ -2,7 +2,11 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,6 +108,152 @@ func TestScriptRouteServesBody(t *testing.T) {
 	}
 	if rec.Body.String() != "echo ok\n" {
 		t.Fatalf("body = %q", rec.Body.String())
+	}
+}
+
+func TestSharedFilesUploadListDownload(t *testing.T) {
+	shareDir := t.TempDir()
+	app := &App{shareDir: shareDir, hub: NewHub()}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("files", "notes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("bring adapter\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	app.handleUploadFiles(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/files", nil)
+	rec = httptest.NewRecorder()
+	app.handleListFiles(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d", rec.Code)
+	}
+	var files []SharedFile
+	if err := json.Unmarshal(rec.Body.Bytes(), &files); err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Name != "notes.txt" || files[0].Size == 0 {
+		t.Fatalf("unexpected files: %#v", files)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/files/notes.txt", nil)
+	req.SetPathValue("name", "notes.txt")
+	rec = httptest.NewRecorder()
+	app.handleDownloadFile(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status = %d", rec.Code)
+	}
+	if got := rec.Body.String(); got != "bring adapter\n" {
+		t.Fatalf("download body = %q", got)
+	}
+}
+
+func TestSharedFilesZipDownload(t *testing.T) {
+	shareDir := t.TempDir()
+	app := &App{shareDir: shareDir, hub: NewHub()}
+	if err := os.WriteFile(filepath.Join(shareDir, "one.txt"), []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shareDir, "two.log"), []byte("second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/files.zip?name=two.log", nil)
+	rec := httptest.NewRecorder()
+	app.handleDownloadZip(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("zip status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, file := range reader.File {
+		src, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(src)
+		src.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[file.Name] = string(raw)
+	}
+	if _, ok := got["one.txt"]; ok {
+		t.Fatalf("filtered zip included hidden file: %#v", got)
+	}
+	if got["two.log"] != "second" {
+		t.Fatalf("unexpected zip contents: %#v", got)
+	}
+}
+
+func TestSharedFilesRejectUnsafeName(t *testing.T) {
+	if validSharedFilename("../notes.txt") {
+		t.Fatal("expected path traversal name to be rejected")
+	}
+	if validSharedFilename("bad\nname.txt") {
+		t.Fatal("expected control character name to be rejected")
+	}
+}
+
+func TestResetClearsStateAndSharedFiles(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(filepath.Join(dir, "rescue.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shareDir := filepath.Join(dir, "rescue-files")
+	app := &App{store: store, shareDir: shareDir, hub: NewHub()}
+
+	err = store.Save(StoreFile{
+		Version:      1,
+		Instructions: []Instruction{{ID: "instruction-1", Title: "Keep", Content: "old note"}},
+		Scripts:      []Script{{ID: "script-1", Filename: "run.sh", Content: "echo old"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(shareDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shareDir, "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/reset", nil)
+	rec := httptest.NewRecorder()
+	app.handleReset(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+
+	got := store.Get()
+	if got.Instructions[0].Content != "" || got.Scripts[0].Content != "" {
+		t.Fatalf("state was not cleared: %#v", got)
+	}
+	files, err := listSharedFiles(shareDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("shared files were not cleared: %#v", files)
 	}
 }
 

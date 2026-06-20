@@ -2,11 +2,20 @@ const stateLabel = document.querySelector("#save-state");
 const serverSummary = document.querySelector("#server-summary");
 const instructionRoot = document.querySelector("#instructions");
 const scriptRoot = document.querySelector("#scripts");
+const resetAll = document.querySelector("#reset-all");
+const uploadForm = document.querySelector("#file-upload");
+const uploadInput = document.querySelector("#shared-files");
+const uploadStatus = document.querySelector("#upload-status");
+const sharedFilesRoot = document.querySelector("#shared-files-list");
+const downloadAll = document.querySelector("#download-all");
+const downloadZip = document.querySelector("#download-zip");
 const instructionTemplate = document.querySelector("#instruction-template");
 const scriptTemplate = document.querySelector("#script-template");
 const instructionAutoRows = 10;
 
 let state = null;
+let sharedFiles = [];
+let hiddenFiles = new Set();
 let saveTimer = null;
 let rendering = false;
 let dirty = false;
@@ -23,6 +32,13 @@ async function loadState() {
   setStatus("Saved");
 }
 
+async function loadFiles() {
+  const response = await fetch("/api/files", { cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+  sharedFiles = await response.json();
+  renderFiles();
+}
+
 function render() {
   rendering = true;
   serverSummary.textContent = summaryText();
@@ -30,6 +46,73 @@ function render() {
   scriptRoot.replaceChildren(...state.scripts.map(renderScript));
   resizeInstructionTextareas();
   rendering = false;
+}
+
+function renderFiles() {
+  const files = visibleFiles();
+  const hasFiles = files.length > 0;
+  downloadAll.disabled = !hasFiles;
+  downloadZip.classList.toggle("disabled", !hasFiles);
+  downloadZip.setAttribute("aria-disabled", String(!hasFiles));
+  downloadZip.href = zipURL(files);
+  if (sharedFiles.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty-files";
+    empty.textContent = "No shared files yet.";
+    sharedFilesRoot.replaceChildren(empty);
+    return;
+  }
+  if (files.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty-files";
+    empty.textContent = "No shared files selected.";
+    sharedFilesRoot.replaceChildren(empty);
+    return;
+  }
+  sharedFilesRoot.replaceChildren(...files.map(renderFile));
+}
+
+function renderFile(file) {
+  const item = document.createElement("li");
+  item.className = "shared-file";
+
+  const href = `/files/${encodeURIComponent(file.name)}`;
+  const link = document.createElement("a");
+  link.className = "shared-link";
+  link.href = href;
+  link.download = file.name;
+
+  const name = document.createElement("span");
+  name.className = "shared-name";
+  name.textContent = file.name;
+
+  const meta = document.createElement("span");
+  meta.className = "shared-meta";
+  meta.textContent = formatBytes(file.size);
+
+  link.append(name, meta);
+
+  const download = document.createElement("a");
+  download.className = "download-file";
+  download.href = href;
+  download.download = file.name;
+  download.setAttribute("aria-label", `Download ${file.name}`);
+  download.title = "Download";
+  download.innerHTML = downloadIcon();
+
+  const hide = document.createElement("button");
+  hide.className = "hide-file";
+  hide.type = "button";
+  hide.setAttribute("aria-label", `Remove ${file.name} from list`);
+  hide.title = "Remove from list";
+  hide.innerHTML = closeIcon();
+  hide.addEventListener("click", () => {
+    hiddenFiles.add(file.name);
+    renderFiles();
+  });
+
+  item.append(link, download, hide);
+  return item;
 }
 
 function summaryText() {
@@ -176,6 +259,94 @@ document.querySelector("#add-script").addEventListener("click", () => {
   scheduleSave();
 });
 
+resetAll.addEventListener("click", async () => {
+  const confirmed = window.confirm(
+    "Reset instructions, scripts, and shared files? This cannot be undone.",
+  );
+  if (!confirmed) return;
+
+  clearTimeout(saveTimer);
+  dirty = false;
+  setStatus("Resetting...");
+  uploadStatus.textContent = "";
+  try {
+    const response = await fetch("/api/reset", { method: "POST" });
+    if (!response.ok) throw new Error(await response.text());
+    state = await response.json();
+    sharedFiles = [];
+    hiddenFiles = new Set();
+    uploadInput.value = "";
+    render();
+    renderFiles();
+    setStatus("Reset");
+  } catch (error) {
+    setStatus(`Reset failed: ${error.message.trim()}`);
+  }
+});
+
+uploadForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+});
+
+uploadInput.addEventListener("change", uploadSelectedFiles);
+downloadAll.addEventListener("click", downloadAllFiles);
+downloadZip.addEventListener("click", (event) => {
+  if (visibleFiles().length === 0) {
+    event.preventDefault();
+  }
+});
+downloadAll.innerHTML = downloadIcon();
+downloadZip.innerHTML = zipIcon();
+
+async function uploadSelectedFiles() {
+  if (!uploadInput.files.length) {
+    return;
+  }
+  const names = Array.from(uploadInput.files, (file) => file.name);
+  const body = new FormData();
+  for (const file of uploadInput.files) {
+    body.append("files", file);
+  }
+  uploadStatus.textContent = "Uploading...";
+  try {
+    const response = await fetch("/api/files", { method: "POST", body });
+    if (!response.ok) throw new Error(await response.text());
+    names.forEach((name) => hiddenFiles.delete(name));
+    uploadInput.value = "";
+    uploadStatus.textContent = "Uploaded";
+    await loadFiles();
+  } catch (error) {
+    uploadStatus.textContent = `Upload failed: ${error.message.trim()}`;
+  }
+}
+
+function downloadAllFiles() {
+  const files = visibleFiles();
+  if (files.length === 0) return;
+  files.forEach((file, index) => {
+    window.setTimeout(() => {
+      const link = document.createElement("a");
+      link.href = `/files/${encodeURIComponent(file.name)}`;
+      link.download = file.name;
+      link.style.display = "none";
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }, index * 120);
+  });
+}
+
+function visibleFiles() {
+  return sharedFiles.filter((file) => !hiddenFiles.has(file.name));
+}
+
+function zipURL(files) {
+  if (files.length === 0) return "/files.zip";
+  const params = new URLSearchParams();
+  files.forEach((file) => params.append("name", file.name));
+  return `/files.zip?${params.toString()}`;
+}
+
 function nextNumber(items, prefix) {
   const used = new Set(
     items
@@ -187,6 +358,49 @@ function nextNumber(items, prefix) {
   let next = 1;
   while (used.has(next)) next += 1;
   return next;
+}
+
+function formatBytes(size) {
+  if (size < 1024) return `${size} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = size / 1024;
+  let unit = units.shift();
+  while (value >= 1024 && units.length > 0) {
+    value /= 1024;
+    unit = units.shift();
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`;
+}
+
+function downloadIcon() {
+  return `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3v12"></path>
+      <path d="m7 10 5 5 5-5"></path>
+      <path d="M5 21h14"></path>
+    </svg>
+  `;
+}
+
+function zipIcon() {
+  return `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M6 3h8l4 4v14H6z"></path>
+      <path d="M14 3v5h5"></path>
+      <path d="M9 12h2"></path>
+      <path d="M9 16h6"></path>
+      <path d="M13 12h2"></path>
+    </svg>
+  `;
+}
+
+function closeIcon() {
+  return `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M18 6 6 18"></path>
+      <path d="m6 6 12 12"></path>
+    </svg>
+  `;
 }
 
 function resizeInstructionTextareas() {
@@ -243,6 +457,9 @@ function connectEvents() {
   const events = new EventSource("/api/events");
   events.addEventListener("update", () => {
     if (!dirty) loadState().catch((error) => setStatus(`Reload failed: ${error.message}`));
+    loadFiles().catch((error) => {
+      uploadStatus.textContent = `Reload failed: ${error.message}`;
+    });
   });
   events.onerror = () => {
     setStatus("Live reload disconnected");
@@ -252,5 +469,6 @@ function connectEvents() {
 window.addEventListener("resize", resizeInstructionTextareas);
 
 loadState()
+  .then(loadFiles)
   .then(connectEvents)
   .catch((error) => setStatus(`Load failed: ${error.message}`));

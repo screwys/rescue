@@ -6,6 +6,8 @@ Which brings us to this. If you want to give it a try, clone this repo or grab a
 
 You can start the server with `./rescue`, or by opening the downloaded binary, and it opens the page on your browser. It starts the server at port 5000 by default, you can change this to whatever port is accessible just by editing `PORT=5000`, or running `PORT=5001 ./rescue`, it asks you to kill the process if port is busy. 
 
+If you are editing the source locally, rebuild the binary you click with `go build -o rescue .`; the HTML, CSS, and JavaScript are embedded into the Go binary at build time. During development, `go run .` uses the current source.
+
 You can use the Web UI on both devices, or you can simply edit `rescue.toml` and save it. On Web UI, there are two simple side-by-side code blocks by default under `Instructions` and 1 block under ` Script`. You can write the instruction here and save, it turns into a code snippet. If you want to do it by editing the file, edit the instruction's `content` in `rescue.toml`, which is useful if you want to leverage a coding agent. You can resize the blocks and easily add another one from the site, or by adding another `[[instructions]]` entry. The another device can use the block on the right, or write some debugging log into another instruction block and save. The changes are loaded live on the site.
 
 This is the same for scripts, they are in second section, after saving it will print the output the run the script, something like:
@@ -13,5 +15,7 @@ This is the same for scripts, they are in second section, after saving it will p
 ```sh
 curl -fsSL http://your-ipv4-address:5000/install.sh | bash
 ```
+
+The Web UI also has a file sharing column. Pick one or more files there and they upload automatically into `rescue-files/` next to `rescue.toml`; clicking a listed file or its download icon downloads it from the rescue server. The shared file list also has actions to download every file individually or as `rescue-files.zip`.
 
 [LICENSE](LICENSE)

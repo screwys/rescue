@@ -2,6 +2,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
 	"context"
 	"embed"
@@ -76,8 +77,15 @@ type ServerInfo struct {
 	Host     string   `json:"host"`
 	Port     int      `json:"port"`
 	File     string   `json:"file"`
+	ShareDir string   `json:"shareDir"`
 	LocalURL string   `json:"localUrl"`
 	LANURLs  []string `json:"lanUrls"`
+}
+
+type SharedFile struct {
+	Name     string    `json:"name"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
 }
 
 type Store struct {
@@ -96,6 +104,7 @@ type App struct {
 	store     *Store
 	hub       *Hub
 	server    ServerInfo
+	shareDir  string
 	staticFS  http.Handler
 	lastWrite atomic.Int64
 }
@@ -164,11 +173,16 @@ func run(cfg Config) error {
 	if err != nil {
 		return err
 	}
+	shareDir := defaultShareDir(store.path)
+	if err := os.MkdirAll(shareDir, 0o755); err != nil {
+		return err
+	}
 
 	serverInfo := ServerInfo{
 		Host:     cfg.Host,
 		Port:     cfg.Port,
 		File:     store.path,
+		ShareDir: shareDir,
 		LocalURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Port),
 		LANURLs:  lanURLs(cfg.Port),
 	}
@@ -177,6 +191,7 @@ func run(cfg Config) error {
 		store:    store,
 		hub:      NewHub(),
 		server:   serverInfo,
+		shareDir: shareDir,
 		staticFS: http.FileServer(http.FS(static)),
 	}
 
@@ -225,7 +240,12 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", a.staticFS))
 	mux.HandleFunc("GET /api/state", a.handleGetState)
 	mux.HandleFunc("PUT /api/state", a.handlePutState)
+	mux.HandleFunc("POST /api/reset", a.handleReset)
+	mux.HandleFunc("GET /api/files", a.handleListFiles)
+	mux.HandleFunc("POST /api/files", a.handleUploadFiles)
 	mux.HandleFunc("GET /api/events", a.handleEvents)
+	mux.HandleFunc("GET /files.zip", a.handleDownloadZip)
+	mux.HandleFunc("GET /files/{name}", a.handleDownloadFile)
 	mux.HandleFunc("GET /{name}", a.handleScript)
 }
 
@@ -262,6 +282,64 @@ func (a *App) handlePutState(w http.ResponseWriter, r *http.Request) {
 	a.lastWrite.Store(time.Now().UnixNano())
 	a.hub.Broadcast()
 	writeJSON(w, a.state())
+}
+
+func (a *App) handleReset(w http.ResponseWriter, r *http.Request) {
+	if err := a.store.Save(defaultStore()); err != nil {
+		http.Error(w, "reset failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := clearSharedFiles(a.shareDir); err != nil {
+		http.Error(w, "could not clear shared files: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	a.lastWrite.Store(time.Now().UnixNano())
+	a.hub.Broadcast()
+	writeJSON(w, a.state())
+}
+
+func (a *App) handleListFiles(w http.ResponseWriter, r *http.Request) {
+	files, err := listSharedFiles(a.shareDir)
+	if err != nil {
+		http.Error(w, "could not list files: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, files)
+}
+
+func (a *App) handleUploadFiles(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		http.Error(w, "invalid upload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	parts := r.MultipartForm.File["files"]
+	if len(parts) == 0 {
+		http.Error(w, "choose at least one file", http.StatusBadRequest)
+		return
+	}
+	for _, part := range parts {
+		name := strings.TrimSpace(part.Filename)
+		if !validSharedFilename(name) {
+			http.Error(w, fmt.Sprintf("invalid filename %q", part.Filename), http.StatusBadRequest)
+			return
+		}
+		src, err := part.Open()
+		if err != nil {
+			http.Error(w, "could not read upload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := saveSharedFile(a.shareDir, name, src); err != nil {
+			src.Close()
+			http.Error(w, "could not save upload: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := src.Close(); err != nil {
+			http.Error(w, "could not close upload: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	a.hub.Broadcast()
+	w.WriteHeader(http.StatusCreated)
 }
 
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -306,6 +384,80 @@ func (a *App) handleScript(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, script.Content)
 }
 
+func (a *App) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if !validSharedFilename(name) {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join(a.shareDir, name)
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, path)
+}
+
+func (a *App) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
+	files, err := listSharedFiles(a.shareDir)
+	if err != nil {
+		http.Error(w, "could not list files: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	files, err = selectedSharedFiles(files, r.URL.Query()["name"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(files) == 0 {
+		http.Error(w, "no shared files", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "rescue-files.zip"}))
+	w.Header().Set("Cache-Control", "no-store")
+
+	archive := zip.NewWriter(w)
+	defer archive.Close()
+	for _, file := range files {
+		if err := addSharedFileToZip(archive, a.shareDir, file); err != nil {
+			log.Printf("could not add shared file %q to zip: %v", file.Name, err)
+			return
+		}
+	}
+}
+
+func selectedSharedFiles(files []SharedFile, names []string) ([]SharedFile, error) {
+	if len(names) == 0 {
+		return files, nil
+	}
+	byName := make(map[string]SharedFile, len(files))
+	for _, file := range files {
+		byName[file.Name] = file
+	}
+	seen := make(map[string]struct{}, len(names))
+	selected := make([]SharedFile, 0, len(names))
+	for _, name := range names {
+		if !validSharedFilename(name) {
+			return nil, fmt.Errorf("invalid filename %q", name)
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		file, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown shared file %q", name)
+		}
+		seen[name] = struct{}{}
+		selected = append(selected, file)
+	}
+	return selected, nil
+}
+
 func (a *App) state() APIState {
 	data := a.store.Get()
 	return APIState{
@@ -314,6 +466,92 @@ func (a *App) state() APIState {
 		Scripts:      data.Scripts,
 		Server:       a.server,
 	}
+}
+
+func defaultShareDir(storePath string) string {
+	return filepath.Join(filepath.Dir(storePath), "rescue-files")
+}
+
+func listSharedFiles(dir string) ([]SharedFile, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]SharedFile, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if !validSharedFilename(entry.Name()) {
+			continue
+		}
+		files = append(files, SharedFile{
+			Name:     entry.Name(),
+			Size:     info.Size(),
+			Modified: info.ModTime(),
+		})
+	}
+	slices.SortFunc(files, func(a, b SharedFile) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+	return files, nil
+}
+
+func saveSharedFile(dir, name string, src io.Reader) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	dst, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	_, err = io.Copy(dst, src)
+	return err
+}
+
+func addSharedFileToZip(archive *zip.Writer, dir string, file SharedFile) error {
+	path := filepath.Join(dir, file.Name)
+	src, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	info, err := src.Stat()
+	if err != nil {
+		return err
+	}
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return err
+	}
+	header.Name = file.Name
+	header.Method = zip.Deflate
+
+	dst, err := archive.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(dst, src)
+	return err
+}
+
+func clearSharedFiles(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return os.MkdirAll(dir, 0o755)
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *App) watchFile(ctx context.Context) {
@@ -503,6 +741,21 @@ func validScriptFilename(name string) bool {
 			continue
 		}
 		return false
+	}
+	return true
+}
+
+func validSharedFilename(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if name != filepath.Base(name) || strings.Contains(name, "\\") {
+		return false
+	}
+	for _, r := range name {
+		if r < 32 || r == 127 {
+			return false
+		}
 	}
 	return true
 }

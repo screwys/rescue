@@ -14,26 +14,63 @@
         <p id="copy-help">Click on the black snippets to automatically copy</p>
       </div>
       <div class="status">
+        <button id="reset-all" class="reset" type="button">Reset</button>
         <span id="save-state">Loading</span>
       </div>
     </header>
 
-    <main>
-      <section class="section">
-        <div class="section-heading">
-          <h2>Instructions</h2>
-          <button id="add-instruction" type="button">Add instruction</button>
-        </div>
-        <div id="instructions" class="grid"></div>
-      </section>
+    <main class="workspace">
+      <div class="editor-column">
+        <section class="section">
+          <div class="section-heading">
+            <h2>Instructions</h2>
+            <button id="add-instruction" type="button">Add instruction</button>
+          </div>
+          <div id="instructions" class="grid"></div>
+        </section>
 
-      <section class="section">
+        <section class="section">
+          <div class="section-heading">
+            <h2>Scripts</h2>
+            <button id="add-script" type="button">Add script</button>
+          </div>
+          <div id="scripts" class="grid scripts"></div>
+        </section>
+      </div>
+
+      <aside class="section share-column">
         <div class="section-heading">
-          <h2>Scripts</h2>
-          <button id="add-script" type="button">Add script</button>
+          <h2>File sharing</h2>
         </div>
-        <div id="scripts" class="grid scripts"></div>
-      </section>
+        <form id="file-upload" class="block upload-block">
+          <label for="shared-files">Upload</label>
+          <input id="shared-files" type="file" name="files" multiple />
+          <p id="upload-status" class="hint"></p>
+        </form>
+        <div class="shared-list-wrap">
+          <div class="shared-list-head">
+            <h3>Shared files</h3>
+            <div class="shared-actions" aria-label="Shared file downloads">
+              <button
+                id="download-all"
+                class="icon-button"
+                type="button"
+                title="Download all"
+                aria-label="Download all shared files"
+              ></button>
+              <a
+                id="download-zip"
+                class="icon-button"
+                href="/files.zip"
+                download="rescue-files.zip"
+                title="Download zip"
+                aria-label="Download shared files as zip"
+              ></a>
+            </div>
+          </div>
+          <ul id="shared-files-list" class="shared-files"></ul>
+        </div>
+      </aside>
     </main>
 
     <template id="instruction-template">

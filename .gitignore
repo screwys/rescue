@@ -1,5 +1,6 @@
 /rescue
 /rescue-server
+/rescue-files/
 /dist/
 /rescue.toml
 *.tmp
