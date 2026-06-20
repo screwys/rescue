@@ -1,6 +1,12 @@
 # Rescue!
 
-A boring one-click to start server to make it less painful to debug on your one device via your other device! I have felt the need for this as I keep breaking my system, usually when working on [nocblue](https://github.com/screwys/nocblue), which usually results in needing to boot via a live ISO and it is painful for me to browse the internet on a stock browser. I also like to experiment using different operating systems on bare-metal, but I feel lazy to write the full link for my install script at github, or in some cases, the operating system doesn't even have my wi-fi card (FreeBSD PTSD...).
+A boring one-click to start server to make it less painful to debug on your one device via your other device, which you can also use to easily share files on your local network!
+
+> [!WARNING]  
+> This is a simple server intended for only local network usage, it doesn't have a security posture. If you want a persistent file sharing solution, look at [Syncthing](https://syncthing.net/) instead.
+
+
+I have felt the need for this as I keep breaking my system, usually when working on [nocblue](https://github.com/screwys/nocblue), which usually results in needing to boot via a live ISO and it is painful for me to browse the internet on a stock browser. I also like to experiment using different operating systems on bare-metal, but I feel lazy to write the full link for my install script at github, or in some cases, the operating system doesn't even have my wi-fi card (FreeBSD PTSD...).
 
 Which brings us to this. If you want to give it a try, clone this repo or grab a binary from [Releases](https://github.com/screwys/rescue/releases) page.
 
