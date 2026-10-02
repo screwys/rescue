@@ -22,6 +22,30 @@
     <main class="workspace">
       <div class="editor-column">
         <section class="section">
+          <div class="section-heading"><h2>Remote access</h2></div>
+          <form id="pairing-form" class="block">
+            <div class="pairing-options">
+              <label>Name<input id="target-name" maxlength="128" autocomplete="off" /></label>
+              <fieldset class="access-options">
+                <legend>Access</legend>
+                <div class="access-boxes">
+                  <label><input type="radio" name="target-access" value="user" checked /><span>User</span></label>
+                  <label><input type="radio" name="target-access" value="root" /><span>Root</span></label>
+                </div>
+              </fieldset>
+              <label class="check-label"><input id="target-persist" type="checkbox" />Start at boot</label>
+              <button type="submit">New command</button>
+            </div>
+            <div class="snippet-row">
+              <pre id="pairing-command" title="Copy" tabindex="0"><code></code></pre>
+              <button id="copy-pairing" class="icon-button copy-snippet" type="button" title="Copy" aria-label="Copy pairing command" disabled></button>
+            </div>
+            <p id="pairing-status" role="status" class="hint"></p>
+          </form>
+          <ul id="targets" class="target-list"></ul>
+        </section>
+
+        <section class="section">
           <div class="section-heading">
             <h2>Instructions</h2>
             <button id="add-instruction" type="button">Add instruction</button>
@@ -35,6 +59,12 @@
             <button id="add-script" type="button">Add script</button>
           </div>
           <div id="scripts" class="grid scripts"></div>
+        </section>
+
+        <section class="section">
+          <div class="section-heading"><h2>Logs</h2></div>
+          <div id="logs" class="logs"></div>
+          <p id="logs-status" class="hint" role="status"></p>
         </section>
       </div>
 
@@ -82,7 +112,7 @@
         <textarea class="content-input instruction-body" rows="3" spellcheck="false"></textarea>
         <div class="snippet-row">
           <pre title="Copy" tabindex="0"><code></code></pre>
-          <button class="copy-snippet" type="button">Copy</button>
+          <button class="icon-button copy-snippet" type="button" title="Copy" aria-label="Copy instruction"></button>
         </div>
       </article>
     </template>
@@ -96,7 +126,7 @@
         <textarea class="content-input script-body" spellcheck="false"></textarea>
         <div class="snippet-row">
           <div class="run-line" title="Copy" tabindex="0"></div>
-          <button class="copy-snippet" type="button">Copy</button>
+          <button class="icon-button copy-snippet" type="button" title="Copy" aria-label="Copy script command"></button>
         </div>
       </article>
     </template>

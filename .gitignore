@@ -1,6 +1,8 @@
 /rescue
 /rescue-server
 /rescue-files/
+/rescue-logs/
 /dist/
 /rescue.toml
+*.pairing.json
 *.tmp

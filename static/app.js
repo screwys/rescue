@@ -24,6 +24,91 @@ let dirty = false;
 let saving = false;
 let pendingRemote = false;
 let syncTimer = null;
+let syncingRemote = false;
+let loadingLogs = false;
+const logNodes = new Map();
+
+async function loadLogs() {
+  if (loadingLogs) return;
+  loadingLogs = true;
+  try {
+    const response = await fetch("/api/logs", { cache: "no-store" });
+    if (!response.ok) throw new Error(await response.text());
+    const logs = await response.json();
+    const root = document.querySelector("#logs");
+    const remaining = new Set(logNodes.keys());
+    let previous = null;
+    for (const log of logs) {
+      let node = logNodes.get(log.id);
+      if (!node) {
+        node = createLog(log);
+        logNodes.set(log.id, node);
+      }
+      remaining.delete(log.id);
+      const position = previous ? previous.nextElementSibling : root.firstElementChild;
+      if (node !== position) root.insertBefore(node, position);
+      previous = node;
+      node.querySelector(".log-name").textContent = log.name;
+      const status = log.finished ? `Exit ${log.exitCode ?? "?"}` : "Running";
+      node.querySelector(".log-meta").textContent = [log.device, new Date(log.started).toLocaleString(), status].filter(Boolean).join(" · ");
+      if (log.size > node.offset) await appendLogOutput(node, log);
+    }
+    for (const id of remaining) {
+      logNodes.get(id).remove();
+      logNodes.delete(id);
+    }
+    document.querySelector("#logs-status").textContent = "";
+  } finally {
+    loadingLogs = false;
+  }
+}
+
+function createLog(log) {
+  const node = document.createElement("details");
+  node.className = "block log";
+  node.offset = 0;
+  node.decoder = new TextDecoder();
+  const summary = document.createElement("summary");
+  const name = document.createElement("strong");
+  name.className = "log-name";
+  const meta = document.createElement("span");
+  meta.className = "log-meta";
+  summary.append(name, meta);
+  const actions = document.createElement("div");
+  actions.className = "log-actions";
+  const download = document.createElement("a");
+  download.className = "icon-button";
+  download.href = `/api/logs/${encodeURIComponent(log.id)}/download`;
+  download.download = "";
+  download.title = "Download log";
+  download.setAttribute("aria-label", "Download log");
+  download.innerHTML = downloadIcon();
+  const copy = document.createElement("button");
+  copy.className = "icon-button copy-snippet";
+  copy.type = "button";
+  copy.title = "Copy log";
+  copy.setAttribute("aria-label", "Copy log");
+  copy.innerHTML = copyIcon();
+  const output = document.createElement("pre");
+  output.className = "log-output";
+  copy.addEventListener("click", () => copyText(output.textContent, copy));
+  actions.append(copy, download);
+  node.append(summary, actions, output);
+  return node;
+}
+
+async function appendLogOutput(node, log) {
+  const response = await fetch(`/api/logs/${encodeURIComponent(log.id)}/output?offset=${node.offset}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+  const bytes = await response.arrayBuffer();
+  const nextOffset = response.headers.get("X-Log-Offset");
+  node.offset = nextOffset === null ? node.offset + bytes.byteLength : Number(nextOffset);
+  const output = node.querySelector(".log-output");
+  const atBottom = output.scrollTop + output.clientHeight >= output.scrollHeight - 2;
+  const text = node.decoder.decode(bytes, { stream: !log.finished || node.offset < log.size });
+  if (text) output.append(document.createTextNode(text));
+  if (atBottom) output.scrollTop = output.scrollHeight;
+}
 
 function setStatus(text) {
   stateLabel.textContent = text;
@@ -59,10 +144,29 @@ async function loadFiles() {
 function render() {
   rendering = true;
   serverSummary.textContent = summaryText();
-  instructionRoot.replaceChildren(...state.instructions.map(renderInstruction));
-  scriptRoot.replaceChildren(...state.scripts.map(renderScript));
-  resizeInstructionTextareas();
+  updateBlocks(instructionRoot, state.instructions, renderInstruction);
+  updateBlocks(scriptRoot, state.scripts, renderScript);
   rendering = false;
+}
+
+function updateBlocks(root, items, create) {
+  const existing = new Map(Array.from(root.children, (node) => [node.dataset.id, node]));
+  let previous = null;
+  for (const item of items) {
+    let node = existing.get(item.id);
+    const added = !node;
+    if (!node) node = create(item);
+    node.dataset.id = item.id;
+    node.updateItem(item);
+    existing.delete(item.id);
+    const position = previous ? previous.nextElementSibling : root.firstElementChild;
+    if (node !== position) root.insertBefore(node, position);
+    if (added && node.querySelector('.instruction-body')) {
+      resizeInstructionTextarea(node.querySelector('.instruction-body'));
+    }
+    previous = node;
+  }
+  for (const node of existing.values()) node.remove();
 }
 
 function renderFiles() {
@@ -144,9 +248,16 @@ function renderInstruction(item) {
   const code = node.querySelector("code");
   const pre = node.querySelector("pre");
   const copy = node.querySelector(".copy-snippet");
+  copy.innerHTML = copyIcon();
   title.value = item.title;
   content.value = item.content;
   code.textContent = item.content;
+  node.updateItem = (next) => {
+    item = next;
+    if (title.value !== item.title) title.value = item.title;
+    if (content.value !== item.content) content.value = item.content;
+    if (code.textContent !== item.content) code.textContent = item.content;
+  };
 
   title.addEventListener("input", () => {
     item.title = title.value;
@@ -180,9 +291,17 @@ function renderScript(item) {
   const content = node.querySelector(".content-input");
   const runLine = node.querySelector(".run-line");
   const copy = node.querySelector(".copy-snippet");
+  copy.innerHTML = copyIcon();
   filename.value = item.filename;
   content.value = item.content;
   runLine.textContent = runCommand(item.filename);
+  node.updateItem = (next) => {
+    item = next;
+    if (filename.value !== item.filename) filename.value = item.filename;
+    if (content.value !== item.content) content.value = item.content;
+    const command = runCommand(item.filename);
+    if (runLine.textContent !== command) runLine.textContent = command;
+  };
 
   filename.addEventListener("input", () => {
     item.filename = filename.value;
@@ -212,12 +331,15 @@ function renderScript(item) {
 function runCommand(filename) {
   const base = scriptBaseURL();
   const safeName = encodeURIComponent(filename || "install.sh");
-  return `curl -fsSL ${base}/${safeName} | bash`;
+  const windows = /Windows/i.test(navigator.userAgent);
+  const url = `${base}/run/${safeName}?platform=${windows ? "windows" : "unix"}`;
+  if (windows) return `Invoke-RestMethod '${url.replaceAll("'", "''")}' | Invoke-Expression`;
+  return `curl -fsSL '${url.replaceAll("'", "'\\''")}' | bash`;
 }
 
 function scriptBaseURL() {
   const host = window.location.hostname;
-  const openedRemote = host && host !== "127.0.0.1" && host !== "localhost" && host !== "::1";
+  const openedRemote = host && !["127.0.0.1", "localhost", "::1", "[::1]"].includes(host);
   if (openedRemote) return window.location.origin;
   return state.server.lanUrls[0] || window.location.origin || state.server.localUrl;
 }
@@ -432,6 +554,14 @@ function closeIcon() {
   `;
 }
 
+function copyIcon() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>';
+}
+
+function checkIcon() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+}
+
 function resizeInstructionTextareas() {
   document.querySelectorAll(".instruction-body").forEach(resizeInstructionTextarea);
 }
@@ -475,24 +605,39 @@ async function copyText(text, button) {
 }
 
 function flashCopy(button, text) {
-  const previous = button.textContent;
-  button.textContent = text;
-  window.setTimeout(() => {
-    button.textContent = previous;
+  clearTimeout(button.copyTimer);
+  button.innerHTML = text === "Copied" ? checkIcon() : closeIcon();
+  button.title = text;
+  button.copyTimer = window.setTimeout(() => {
+    button.innerHTML = copyIcon();
+    button.title = "Copy";
   }, 900);
 }
 
 async function syncRemote() {
-  if (dirty || saving) {
-    pendingRemote = true;
-    return;
+  if (syncingRemote) return;
+  syncingRemote = true;
+  try {
+    const requests = [
+      loadFiles().catch((error) => {
+        uploadStatus.textContent = `Reload failed: ${error.message}`;
+      }),
+      loadTargets().catch((error) => {
+        document.querySelector("#pairing-status").textContent = error.message;
+      }),
+      loadLogs().catch((error) => {
+        document.querySelector("#logs-status").textContent = error.message.trim();
+      }),
+    ];
+    if (dirty || saving) {
+      pendingRemote = true;
+    } else {
+      requests.push(loadState().catch((error) => setStatus(`Reload failed: ${error.message}`)));
+    }
+    await Promise.all(requests);
+  } finally {
+    syncingRemote = false;
   }
-  await Promise.all([
-    loadState().catch((error) => setStatus(`Reload failed: ${error.message}`)),
-    loadFiles().catch((error) => {
-      uploadStatus.textContent = `Reload failed: ${error.message}`;
-    }),
-  ]);
 }
 
 function connectEvents() {
@@ -522,7 +667,103 @@ window.addEventListener("resize", resizeInstructionTextareas);
 loadState({ force: true })
   .then(loadFiles)
   .then(() => {
+    generatePairing();
+    syncRemote();
     connectEvents();
     startSyncFallback();
   })
   .catch((error) => setStatus(`Load failed: ${error.message}`));
+
+const pairingForm = document.querySelector("#pairing-form");
+const pairingCode = document.querySelector("#pairing-command code");
+const pairingCopy = document.querySelector("#copy-pairing");
+pairingCopy.innerHTML = copyIcon();
+const pairingStatus = document.querySelector("#pairing-status");
+let pairingRevision = 0;
+let pairingTimer;
+let targetsFingerprint = "";
+
+async function generatePairing() {
+  const revision = ++pairingRevision;
+  pairingCopy.disabled = true;
+  pairingStatus.textContent = "";
+  try {
+    const response = await fetch("/api/pairing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: /Windows/i.test(navigator.userAgent) ? "windows" : "unix",
+        name: document.querySelector("#target-name").value,
+        root: document.querySelector('input[name="target-access"]:checked').value === "root",
+        persistent: document.querySelector("#target-persist").checked,
+        url: scriptBaseURL(),
+      }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const result = await response.json();
+    if (revision !== pairingRevision) return;
+    pairingCode.textContent = result.command;
+    pairingCopy.disabled = false;
+  } catch (error) {
+    if (revision === pairingRevision) pairingStatus.textContent = error.message.trim();
+  }
+}
+
+pairingForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  clearTimeout(pairingTimer);
+  generatePairing();
+});
+pairingForm.addEventListener("input", (event) => {
+  if (!event.target.matches("input, select")) return;
+  ++pairingRevision;
+  pairingCopy.disabled = true;
+  clearTimeout(pairingTimer);
+  pairingTimer = setTimeout(generatePairing, 300);
+});
+pairingCopy.addEventListener("click", () => copyText(pairingCode.textContent, pairingCopy));
+const pairingPreview = document.querySelector("#pairing-command");
+pairingPreview.addEventListener("click", () => {
+  if (!pairingCopy.disabled) copyText(pairingCode.textContent, pairingCopy);
+});
+pairingPreview.addEventListener("keydown", (event) => {
+  if ((event.key === "Enter" || event.key === " ") && !pairingCopy.disabled) {
+    event.preventDefault();
+    copyText(pairingCode.textContent, pairingCopy);
+  }
+});
+
+async function loadTargets() {
+  const response = await fetch("/api/targets", { cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+  const targets = await response.json();
+  const fingerprint = JSON.stringify(targets);
+  if (fingerprint === targetsFingerprint) return;
+  targetsFingerprint = fingerprint;
+  updateBlocks(document.querySelector("#targets"), targets, (target) => {
+    const row = document.createElement("li");
+    const name = document.createElement("strong");
+    const details = document.createElement("span");
+    row.append(name, details);
+    const revoke = document.createElement("button");
+    revoke.type = "button";
+    revoke.className = "remove-target";
+    revoke.title = "Remove device";
+    revoke.innerHTML = closeIcon();
+    revoke.addEventListener("click", async () => {
+      try {
+        const response = await fetch(`/api/targets/${encodeURIComponent(target.id)}`, { method: "DELETE" });
+        if (!response.ok) throw new Error(await response.text());
+        await loadTargets();
+      } catch (error) { pairingStatus.textContent = error.message.trim(); }
+    });
+    name.after(revoke);
+    row.updateItem = (next) => {
+      target = next;
+      name.textContent = target.name;
+      details.textContent = `${target.user} · ${target.os}/${target.arch} · ${target.persistent ? "Start at boot" : "Temporary"} · ${target.connected ? "Connected" : "Offline"}`;
+      revoke.setAttribute("aria-label", `Remove ${target.name}`);
+    };
+    return row;
+  });
+}

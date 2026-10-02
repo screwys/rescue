@@ -24,4 +24,20 @@ curl -fsSL http://your-ipv4-address:5000/install.sh | bash
 
 The Web UI also has a file sharing column. Pick one or more files there and they upload automatically into `rescue-files/` next to `rescue.toml`; clicking a listed file or its download icon downloads it from the rescue server. The shared file list also has actions to download every file individually or as `rescue-files.zip`.
 
+## Remote access
+
+Open the Rescue page from the other machine, choose User or Root under Remote access, and copy the command into its terminal. Select Start at boot if you want it to reconnect after reboot. It may ask for an administrator password, but you don't need to install or enable SSH yourself.
+
+On Windows, the same block gives you a PowerShell command. User access at boot asks for that user's password; Windows stores it in Task Scheduler.
+
+On your usual computer, you can open its shell with:
+
+```sh
+./rescue shell machine
+```
+
+Use the name you picked on the page. If you changed the port, set `PORT` here too. Agents with terminal access can use the same connection.
+
+If you're building locally and the other machine uses a different OS or architecture, run `sh scripts/build-targets.sh` first.
+
 [LICENSE](LICENSE)

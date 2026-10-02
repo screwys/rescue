@@ -18,10 +18,18 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
+          - goos: linux
+            goarch: "386"
+          - goos: linux
+            goarch: arm
           - goos: freebsd
             goarch: amd64
           - goos: freebsd
             goarch: arm64
+          - goos: freebsd
+            goarch: "386"
+          - goos: freebsd
+            goarch: arm
           - goos: darwin
             goarch: amd64
           - goos: darwin
@@ -31,6 +39,9 @@ jobs:
             ext: .exe
           - goos: windows
             goarch: arm64
+            ext: .exe
+          - goos: windows
+            goarch: "386"
             ext: .exe
     steps:
       - uses: actions/checkout@v4
@@ -43,10 +54,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          GOARM: "6"
         run: |
           mkdir -p dist
           name="rescue-${GOOS}-${GOARCH}${{ matrix.ext }}"
-          go build -trimpath -ldflags="-s -w" -o "dist/$name" .
+          go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/$name" .
       - uses: actions/upload-artifact@v4
         with:
           name: rescue-${{ matrix.goos }}-${{ matrix.goarch }}

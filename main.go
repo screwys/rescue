@@ -43,9 +43,11 @@ const (
 )
 
 type Config struct {
-	Host string
-	Port int
-	File string
+	Host      string
+	Port      int
+	File      string
+	Assets    string
+	NoBrowser bool
 }
 
 type StoreFile struct {
@@ -107,9 +109,14 @@ type App struct {
 	shareDir  string
 	staticFS  http.Handler
 	lastWrite atomic.Int64
+	remote    *RemoteHub
+	logs      *RunLogs
 }
 
 func main() {
+	if len(os.Args) > 1 && remoteCommand(os.Args[1]) {
+		os.Exit(runRemoteCLI(os.Args[1:]))
+	}
 	cfg := parseConfig(os.Args[1:])
 	if err := run(cfg); err != nil {
 		log.Fatal(err)
@@ -127,6 +134,8 @@ func parseConfig(args []string) Config {
 	flags.StringVar(&cfg.Host, "host", cfg.Host, "host/interface to bind")
 	flags.IntVar(&cfg.Port, "port", cfg.Port, "port to listen on")
 	flags.StringVar(&cfg.File, "file", cfg.File, "TOML file to read and save")
+	flags.StringVar(&cfg.Assets, "assets", "dist", "directory containing target binaries")
+	flags.BoolVar(&cfg.NoBrowser, "no-browser", false, "do not open the browser")
 	flags.Parse(args)
 	return cfg
 }
@@ -197,6 +206,17 @@ func run(cfg Config) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	remote, err := OpenRemoteHub(store.path, cfg.Assets)
+	if err != nil {
+		return err
+	}
+	app.remote = remote
+	app.logs, err = OpenRunLogs(store.path)
+	if err != nil {
+		return err
+	}
+	remote.logs = app.logs
+	defer remote.Close()
 	go app.watchFile(ctx)
 
 	mux := http.NewServeMux()
@@ -211,7 +231,9 @@ func run(cfg Config) error {
 	go func() {
 		errCh <- srv.Serve(listener)
 	}()
-	go openBrowser(serverInfo.LocalURL)
+	if !cfg.NoBrowser {
+		go openBrowser(serverInfo.LocalURL)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -236,6 +258,13 @@ func run(cfg Config) error {
 }
 
 func (a *App) routes(mux *http.ServeMux) {
+	if a.logs != nil {
+		a.logs.routes(mux)
+		mux.HandleFunc("GET /run/{name}", a.handleRunScript)
+	}
+	if a.remote != nil {
+		a.remote.routes(mux)
+	}
 	mux.HandleFunc("GET /", a.handleIndex)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", a.staticFS))
 	mux.HandleFunc("GET /api/state", a.handleGetState)

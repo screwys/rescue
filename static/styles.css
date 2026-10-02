@@ -19,6 +19,33 @@
   box-sizing: border-box;
 }
 
+.pairing-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.pairing-options > label:first-child { flex: 1; min-width: 160px; }
+.pairing-options label { margin-bottom: 0; }
+.pairing-options .check-label { display: flex; align-items: center; gap: 8px; height: 38px; }
+.access-options { border: 0; margin: 0; padding: 0; color: var(--muted); font-size: 12px; font-weight: 750; }
+.access-options legend { padding: 0; margin-bottom: 6px; }
+.access-boxes { display: flex; gap: 6px; }
+.access-boxes label { position: relative; display: block; cursor: pointer; }
+.access-boxes input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.access-boxes span { display: grid; place-items: center; height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 14px; }
+.access-boxes input:checked + span { border-color: var(--accent); background: var(--accent); color: white; }
+.access-boxes input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.check-label input { width: 18px; height: 18px; }
+#pairing-command { white-space: pre-wrap; overflow-wrap: anywhere; min-height: var(--copy-preview-max-height); }
+.target-list { list-style: none; padding: 0; margin: 16px 0 0; }
+.target-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.target-list span { flex: 1; font-size: 13px; color: var(--muted); }
+.remove-target { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; background: transparent; border-color: transparent; color: var(--danger); }
+.remove-target:hover { background: #fff1f3; border-color: var(--danger); }
+.remove-target svg { width: 15px; height: 15px; }
+
 body {
   min-height: 100vh;
   margin: 0;
@@ -407,17 +434,26 @@ pre,
 
 .snippet-row pre {
   margin: 0;
+  min-height: var(--copy-preview-max-height);
   cursor: copy;
 }
 
 .run-line {
   margin: 0;
+  min-height: var(--copy-preview-max-height);
   cursor: copy;
 }
 
 .copy-snippet {
-  min-width: 72px;
+  align-self: center;
 }
+
+.logs { display: grid; gap: 12px; }
+.log summary { cursor: pointer; }
+.log-name { margin-left: 6px; }
+.log-meta { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; }
+.log-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.log-output { min-height: 120px; max-height: 320px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 pre code,
 .run-line {
@@ -461,7 +497,4 @@ pre code,
     flex-direction: column;
   }
 
-  .snippet-row {
-    grid-template-columns: 1fr;
-  }
 }
