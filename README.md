@@ -1,6 +1,6 @@
 # Rescue!
 
-A boring one-click to start server to make it less painful to debug on your one device via your other device, which you can also use to easily share files on your local network!
+A boring one-click to start server to make it less painful to debug on your one device via your other device, which you can also use to easily share files on your local network! It can also provide a remote shell from the other device, using ssh under the hood. 
 
 > [!WARNING]  
 > This is a simple server intended for only local network usage, it doesn't have a security posture. If you want a persistent file sharing solution, look at [Syncthing](https://syncthing.net/) instead.
